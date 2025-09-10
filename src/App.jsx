@@ -37,6 +37,8 @@ function App() {
           <p>Adicionar Planta</p>
         </div>
 
+        {/*Talvez isso vire uma crud conectada diretamente com o bd*/}
+
       </div>
 
       
