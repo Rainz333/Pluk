@@ -468,5 +468,4 @@ const PlukApp = () => {
   );
 };
 
-
-export default PlukApp;
+export default App;
