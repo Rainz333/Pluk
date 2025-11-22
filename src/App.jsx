@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Camera, Droplets, Sun, Plus, X, Trash2, LogOut, User, Moon, Search, Wind } from 'lucide-react';
+import { Camera, Droplets, Sun, Plus, X, Trash2, LogOut, User, Moon, Search, Wind, Eye, EyeOff } from 'lucide-react';
 
 const PLANT_TYPES = {
   suculenta: { name: 'Suculenta', icon: '🌵', waterDays: 7, sunHours: 4 },
@@ -21,6 +21,13 @@ const PlukApp = () => {
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [recoveryEmail, setRecoveryEmail] = useState('');
+  const [securityQuestion, setSecurityQuestion] = useState('');
+  const [securityAnswer, setSecurityAnswer] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [recoveryStep, setRecoveryStep] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState('');
   const [showSearchResults, setShowSearchResults] = useState(false);
@@ -180,6 +187,11 @@ const PlukApp = () => {
     if (!loginEmail || !loginPassword) return;
 
     if (isRegistering) {
+      if (!securityQuestion || !securityAnswer) {
+        alert('Por favor, preencha a pergunta e resposta de seguranca!');
+        return;
+      }
+      
       const users = JSON.parse(sessionStorage.getItem('plukUsers') || '[]');
       const existingUser = users.find(u => u.email === loginEmail);
       
@@ -188,7 +200,12 @@ const PlukApp = () => {
         return;
       }
       
-      const newUser = { email: loginEmail, password: loginPassword };
+      const newUser = { 
+        email: loginEmail, 
+        password: loginPassword,
+        securityQuestion: securityQuestion,
+        securityAnswer: securityAnswer.toLowerCase()
+      };
       users.push(newUser);
       sessionStorage.setItem('plukUsers', JSON.stringify(users));
       sessionStorage.setItem('plukUser', JSON.stringify(newUser));
@@ -197,6 +214,8 @@ const PlukApp = () => {
       loadUserPlants(loginEmail);
       getUserLocation();
       fetchWeather();
+      setSecurityQuestion('');
+      setSecurityAnswer('');
     } else {
       const users = JSON.parse(sessionStorage.getItem('plukUsers') || '[]');
       const foundUser = users.find(u => u.email === loginEmail && u.password === loginPassword);
@@ -210,6 +229,67 @@ const PlukApp = () => {
         fetchWeather();
       } else {
         alert('Email ou senha incorretos!');
+      }
+    }
+  };
+
+  const handleForgotPassword = () => {
+    if (recoveryStep === 1) {
+      if (!recoveryEmail) {
+        alert('Digite seu email!');
+        return;
+      }
+      
+      const users = JSON.parse(sessionStorage.getItem('plukUsers') || '[]');
+      const user = users.find(u => u.email === recoveryEmail);
+      
+      if (!user) {
+        alert('Email nao encontrado!');
+        return;
+      }
+      
+      // Se o usuário não tem pergunta de segurança (usuário antigo)
+      if (!user.securityQuestion) {
+        setRecoveryStep(3); // Pula direto para redefinir senha
+      } else {
+        setRecoveryStep(2); // Vai para pergunta de segurança
+      }
+    } else if (recoveryStep === 2) {
+      const users = JSON.parse(sessionStorage.getItem('plukUsers') || '[]');
+      const user = users.find(u => u.email === recoveryEmail);
+      
+      if (securityAnswer.toLowerCase() !== user.securityAnswer) {
+        alert('Resposta incorreta!');
+        return;
+      }
+      
+      setRecoveryStep(3);
+    } else if (recoveryStep === 3) {
+      if (!newPassword || newPassword.length < 6) {
+        alert('A senha deve ter pelo menos 6 caracteres!');
+        return;
+      }
+      
+      const users = JSON.parse(sessionStorage.getItem('plukUsers') || '[]');
+      const userIndex = users.findIndex(u => u.email === recoveryEmail);
+      
+      if (userIndex !== -1) {
+        users[userIndex].password = newPassword;
+        
+        // Se for usuário antigo, aproveita para adicionar pergunta de segurança
+        if (!users[userIndex].securityQuestion && securityQuestion && securityAnswer) {
+          users[userIndex].securityQuestion = securityQuestion;
+          users[userIndex].securityAnswer = securityAnswer.toLowerCase();
+        }
+        
+        sessionStorage.setItem('plukUsers', JSON.stringify(users));
+        alert('Senha alterada com sucesso!');
+        setShowForgotPassword(false);
+        setRecoveryStep(1);
+        setRecoveryEmail('');
+        setSecurityAnswer('');
+        setNewPassword('');
+        setSecurityQuestion('');
       }
     }
   };
@@ -325,6 +405,101 @@ const PlukApp = () => {
   const headerClass = darkMode ? 'bg-gray-800 text-white' : 'bg-white text-gray-800';
 
   if (showLogin) {
+    if (showForgotPassword) {
+      return (
+        <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
+          <div className={`${cardClass} rounded-3xl shadow-2xl p-8 w-full max-w-md`}>
+            <div className="text-center mb-8">
+              <h1 className="text-5xl font-bold text-green-600 mb-2">🌱 Pluk</h1>
+              <p className={textClass}>Recuperacao de Senha</p>
+            </div>
+            
+            <div className="space-y-4">
+              {recoveryStep === 1 && (
+                <>
+                  <div>
+                    <label className={`block text-sm font-medium ${textClass} mb-2`}>Email</label>
+                    <input
+                      type="email"
+                      value={recoveryEmail}
+                      onChange={(e) => setRecoveryEmail(e.target.value)}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-transparent"
+                      placeholder="seu@email.com"
+                    />
+                  </div>
+                </>
+              )}
+              
+              {recoveryStep === 2 && (
+                <>
+                  <div className={`p-4 bg-blue-50 ${darkMode ? 'bg-blue-900' : ''} rounded-lg mb-4`}>
+                    <p className="text-sm font-medium">Pergunta de Seguranca:</p>
+                    <p className="text-sm mt-1">
+                      {JSON.parse(sessionStorage.getItem('plukUsers') || '[]').find(u => u.email === recoveryEmail)?.securityQuestion}
+                    </p>
+                  </div>
+                  <div>
+                    <label className={`block text-sm font-medium ${textClass} mb-2`}>Resposta</label>
+                    <input
+                      type="text"
+                      value={securityAnswer}
+                      onChange={(e) => setSecurityAnswer(e.target.value)}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-transparent"
+                      placeholder="Sua resposta"
+                    />
+                  </div>
+                </>
+              )}
+              
+              {recoveryStep === 3 && (
+                <>
+                  <div>
+                    <label className={`block text-sm font-medium ${textClass} mb-2`}>Nova Senha</label>
+                    <div className="relative">
+                      <input
+                        type={showPassword ? "text" : "password"}
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-transparent"
+                        placeholder="••••••••"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500"
+                      >
+                        {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+              
+              <button
+                onClick={handleForgotPassword}
+                className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold hover:bg-green-700 transition"
+              >
+                {recoveryStep === 3 ? 'Alterar Senha' : 'Continuar'}
+              </button>
+              
+              <button
+                onClick={() => {
+                  setShowForgotPassword(false);
+                  setRecoveryStep(1);
+                  setRecoveryEmail('');
+                  setSecurityAnswer('');
+                  setNewPassword('');
+                }}
+                className="w-full text-green-600 py-2 text-sm hover:underline"
+              >
+                Voltar ao Login
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    
     return (
       <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
         <div className={`${cardClass} rounded-3xl shadow-2xl p-8 w-full max-w-md`}>
@@ -348,15 +523,56 @@ const PlukApp = () => {
             
             <div>
               <label className={`block text-sm font-medium ${textClass} mb-2`}>Senha</label>
-              <input
-                type="password"
-                value={loginPassword}
-                onChange={(e) => setLoginPassword(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-transparent"
-                placeholder="••••••••"
-              />
+              <div className="relative">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-transparent"
+                  placeholder="••••••••"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500"
+                >
+                  {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                </button>
+              </div>
             </div>
+            
+            {isRegistering && (
+              <>
+                <div>
+                  <label className={`block text-sm font-medium ${textClass} mb-2`}>Pergunta de Seguranca</label>
+                  <select
+                    value={securityQuestion}
+                    onChange={(e) => setSecurityQuestion(e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 bg-transparent"
+                  >
+                    <option value="">Selecione uma pergunta</option>
+                    <option value="Qual o nome do seu primeiro animal de estimacao?">Qual o nome do seu primeiro animal de estimacao?</option>
+                    <option value="Qual sua cor favorita?">Qual sua cor favorita?</option>
+                    <option value="Em que cidade voce nasceu?">Em que cidade voce nasceu?</option>
+                    <option value="Qual o nome da sua mae?">Qual o nome da sua mae?</option>
+                    <option value="Qual sua comida favorita?">Qual sua comida favorita?</option>
+                  </select>
+                </div>
+                
+                <div>
+                  <label className={`block text-sm font-medium ${textClass} mb-2`}>Resposta de Seguranca</label>
+                  <input
+                    type="text"
+                    value={securityAnswer}
+                    onChange={(e) => setSecurityAnswer(e.target.value)}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-transparent"
+                    placeholder="Sua resposta"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Use para recuperar sua senha no futuro</p>
+                </div>
+              </>
+            )}
             
             <button
               onClick={handleLogin}
@@ -364,6 +580,15 @@ const PlukApp = () => {
             >
               {isRegistering ? 'Criar Conta' : 'Entrar'}
             </button>
+            
+            {!isRegistering && (
+              <button
+                onClick={() => setShowForgotPassword(true)}
+                className="w-full text-blue-600 py-2 text-sm hover:underline"
+              >
+                Esqueci minha senha
+              </button>
+            )}
             
             <button
               onClick={() => setIsRegistering(!isRegistering)}
