@@ -1,6 +1,43 @@
 import React, { useState, useEffect } from 'react';
 import { Camera, Droplets, Sun, Plus, X, Trash2, LogOut, User, Moon, Search, Wind, Eye, EyeOff } from 'lucide-react';
 
+// ============================================================================
+// FIREBASE CONFIGURATION
+// ============================================================================
+// Para conectar com Firebase, descomente e configure abaixo:
+import { initializeApp } from 'firebase/app';
+import { 
+  getAuth, 
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword,
+  signOut,
+  onAuthStateChanged,
+  sendPasswordResetEmail
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  collection, 
+  doc, 
+  setDoc, 
+  getDoc, 
+  updateDoc,
+  deleteDoc 
+} from 'firebase/firestore';
+
+const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+
 const PLANT_TYPES = {
   suculenta: { name: 'Suculenta', icon: '🌵', waterDays: 7, sunHours: 4 },
   samambaia: { name: 'Samambaia', icon: '🌿', waterDays: 2, sunHours: 2 },
@@ -42,6 +79,36 @@ const PlukApp = () => {
     nickname: '',
     photo: null
   });
+  const [useFirebase, setUseFirebase] = useState(true); // Toggle para usar Firebase ou SessionStorage
+
+  // ============================================================================
+  // FIREBASE AUTH LISTENER
+  // ============================================================================
+  // Descomente quando conectar Firebase:
+  
+  useEffect(() => {
+    if (!useFirebase) return;
+    
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        const userData = { 
+          email: firebaseUser.email, 
+          uid: firebaseUser.uid 
+        };
+        setUser(userData);
+        setShowLogin(false);
+        await loadUserPlantsFromFirebase(firebaseUser.uid);
+        getUserLocation();
+        fetchWeather();
+      } else {
+        setUser(null);
+        setPlants([]);
+        setShowLogin(true);
+      }
+    });
+    
+    return () => unsubscribe();
+  }, [useFirebase]);
 
   useEffect(() => {
     const savedUser = sessionStorage.getItem('plukUser');
@@ -183,8 +250,91 @@ const PlukApp = () => {
     setPlants(updatedPlants);
   };
 
+  // ============================================================================
+  // FIREBASE DATABASE FUNCTIONS
+  // ============================================================================
+  // Descomente quando conectar Firebase:
+  
+  const loadUserPlantsFromFirebase = async (uid) => {
+    try {
+      const userDoc = await getDoc(doc(db, 'users', uid));
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        setPlants(userData.plants || []);
+      }
+    } catch (error) {
+      console.error('Erro ao carregar plantas:', error);
+    }
+  };
+
+  const savePlantsToFirebase = async (updatedPlants, uid) => {
+    try {
+      await setDoc(doc(db, 'users', uid), {
+        plants: updatedPlants,
+        email: user.email,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+      setPlants(updatedPlants);
+    } catch (error) {
+      console.error('Erro ao salvar plantas:', error);
+      alert('Erro ao salvar. Tente novamente.');
+    }
+  };
+  
+
   const handleLogin = () => {
     if (!loginEmail || !loginPassword) return;
+
+    // ============================================================================
+    // FIREBASE LOGIN (descomente para usar)
+    // ============================================================================
+    
+    if (useFirebase) {
+      if (isRegistering) {
+        // Criar conta no Firebase
+        createUserWithEmailAndPassword(auth, loginEmail, loginPassword)
+          .then(async (userCredential) => {
+            const firebaseUser = userCredential.user;
+            
+            // Salvar dados adicionais no Firestore
+            await setDoc(doc(db, 'users', firebaseUser.uid), {
+              email: loginEmail,
+              securityQuestion: securityQuestion || null,
+              securityAnswer: securityAnswer ? securityAnswer.toLowerCase() : null,
+              createdAt: new Date().toISOString(),
+              plants: []
+            });
+            
+            alert('Conta criada com sucesso!');
+            setSecurityQuestion('');
+            setSecurityAnswer('');
+          })
+          .catch((error) => {
+            if (error.code === 'auth/email-already-in-use') {
+              alert('Este email ja esta em uso!');
+            } else if (error.code === 'auth/weak-password') {
+              alert('A senha deve ter pelo menos 6 caracteres!');
+            } else {
+              alert('Erro ao criar conta: ' + error.message);
+            }
+          });
+      } else {
+        // Login no Firebase
+        signInWithEmailAndPassword(auth, loginEmail, loginPassword)
+          .catch((error) => {
+            if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
+              alert('Email ou senha incorretos!');
+            } else {
+              alert('Erro ao fazer login: ' + error.message);
+            }
+          });
+      }
+      return;
+    }
+    
+    // ============================================================================
+    // SESSION STORAGE LOGIN (atual)
+    // ============================================================================
 
     if (isRegistering) {
       if (!securityQuestion || !securityAnswer) {
@@ -295,6 +445,24 @@ const PlukApp = () => {
   };
 
   const handleLogout = () => {
+    // ============================================================================
+    // FIREBASE LOGOUT (descomente para usar)
+    // ============================================================================
+    
+    if (useFirebase) {
+      signOut(auth)
+        .then(() => {
+          setUser(null);
+          setPlants([]);
+          setShowLogin(true);
+        })
+        .catch((error) => {
+          console.error('Erro ao fazer logout:', error);
+        });
+      return;
+    }
+    
+  
     sessionStorage.removeItem('plukUser');
     setUser(null);
     setPlants([]);
@@ -323,7 +491,14 @@ const PlukApp = () => {
     };
 
     const updatedPlants = [...plants, plant];
-    savePlants(updatedPlants, user.email);
+    
+    // Use Firebase ou SessionStorage
+    if (useFirebase && user.uid) {
+      // savePlantsToFirebase(updatedPlants, user.uid); // Descomente quando usar Firebase
+    } else {
+      savePlants(updatedPlants, user.email);
+    }
+    
     setShowAddPlant(false);
     setNewPlant({ type: 'suculenta', species: '', nickname: '', photo: null });
   };
@@ -453,6 +628,14 @@ const PlukApp = () => {
               
               {recoveryStep === 3 && (
                 <>
+                  {!JSON.parse(sessionStorage.getItem('plukUsers') || '[]').find(u => u.email === recoveryEmail)?.securityQuestion && (
+                    <div className={`p-4 bg-yellow-50 ${darkMode ? 'bg-yellow-900' : ''} rounded-lg mb-4`}>
+                      <p className="text-sm">
+                        ⚠️ Detectamos que sua conta e antiga. Apos redefinir sua senha, recomendamos adicionar uma pergunta de seguranca para maior protecao.
+                      </p>
+                    </div>
+                  )}
+                  
                   <div>
                     <label className={`block text-sm font-medium ${textClass} mb-2`}>Nova Senha</label>
                     <div className="relative">
@@ -472,6 +655,42 @@ const PlukApp = () => {
                       </button>
                     </div>
                   </div>
+                  
+                  {!JSON.parse(sessionStorage.getItem('plukUsers') || '[]').find(u => u.email === recoveryEmail)?.securityQuestion && (
+                    <>
+                      <div className="border-t border-gray-300 my-4"></div>
+                      <p className={`text-sm font-medium ${textClass} mb-3`}>Adicionar Pergunta de Seguranca (Opcional mas Recomendado)</p>
+                      
+                      <div>
+                        <label className={`block text-sm font-medium ${textClass} mb-2`}>Pergunta de Seguranca</label>
+                        <select
+                          value={securityQuestion}
+                          onChange={(e) => setSecurityQuestion(e.target.value)}
+                          className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 bg-transparent"
+                        >
+                          <option value="">Selecione uma pergunta (opcional)</option>
+                          <option value="Qual o nome do seu primeiro animal de estimacao?">Qual o nome do seu primeiro animal de estimacao?</option>
+                          <option value="Qual sua cor favorita?">Qual sua cor favorita?</option>
+                          <option value="Em que cidade voce nasceu?">Em que cidade voce nasceu?</option>
+                          <option value="Qual o nome da sua mae?">Qual o nome da sua mae?</option>
+                          <option value="Qual sua comida favorita?">Qual sua comida favorita?</option>
+                        </select>
+                      </div>
+                      
+                      {securityQuestion && (
+                        <div>
+                          <label className={`block text-sm font-medium ${textClass} mb-2`}>Resposta</label>
+                          <input
+                            type="text"
+                            value={securityAnswer}
+                            onChange={(e) => setSecurityAnswer(e.target.value)}
+                            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-transparent"
+                            placeholder="Sua resposta"
+                          />
+                        </div>
+                      )}
+                    </>
+                  )}
                 </>
               )}
               
