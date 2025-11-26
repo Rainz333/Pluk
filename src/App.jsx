@@ -9,12 +9,12 @@ import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 // Configure seu Firebase aqui
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID
+  apiKey: "SUA_API_KEY",
+  authDomain: "SEU_PROJETO.firebaseapp.com",
+  projectId: "SEU_PROJETO_ID",
+  storageBucket: "SEU_PROJETO.appspot.com",
+  messagingSenderId: "SEU_SENDER_ID",
+  appId: "SEU_APP_ID"
 };
 
 const app = initializeApp(firebaseConfig);
@@ -49,6 +49,7 @@ const PlukApp = () => {
   const [aiQuestion, setAiQuestion] = useState('');
   const [aiResponse, setAiResponse] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
+  const [identifyingPlant, setIdentifyingPlant] = useState(false);
   const [newPlant, setNewPlant] = useState({
     type: 'suculenta',
     species: '',
@@ -425,6 +426,63 @@ const PlukApp = () => {
     }
   };
 
+  // Identificar espécie da planta usando foto
+  const identifyPlantSpecies = async () => {
+    if (!newPlant.photoFile && !newPlant.photoURL) {
+      alert('Por favor, adicione uma foto da planta primeiro!');
+      return;
+    }
+
+    setIdentifyingPlant(true);
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 500,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'image',
+                  source: {
+                    type: 'base64',
+                    media_type: 'image/jpeg',
+                    data: newPlant.photoURL.split(',')[1]
+                  }
+                },
+                {
+                  type: 'text',
+                  text: 'Identifique a espécie desta planta. Responda APENAS com o nome científico e nome popular em português, de forma concisa. Exemplo: "Aloe vera (Babosa)" ou "Spathiphyllum wallisii (Lírio-da-paz)".'
+                }
+              ]
+            }
+          ]
+        })
+      });
+
+      const data = await response.json();
+      
+      if (data.content && data.content[0]) {
+        const identifiedSpecies = data.content[0].text.trim();
+        setNewPlant({ ...newPlant, species: identifiedSpecies });
+        alert(`✅ Planta identificada: ${identifiedSpecies}`);
+      } else {
+        alert('Não consegui identificar a planta. Tente com outra foto.');
+      }
+    } catch (error) {
+      console.error('Erro ao identificar planta:', error);
+      alert('Erro ao identificar a planta. Verifique sua conexão.');
+    } finally {
+      setIdentifyingPlant(false);
+    }
+  };
+
   const openGoogleMaps = (lat, lng, name) => {
     window.open(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}&query_place_id=${encodeURIComponent(name)}`, '_blank');
   };
@@ -543,15 +601,8 @@ const PlukApp = () => {
           </button>
         </div>
 
-        {loading && plants.length === 0 ? (
-          <div className="text-center py-20">
-            <div className="text-4xl mb-4">⏳</div>
-            <p className="text-gray-600">Carregando suas plantas...</p>
-          </div>
-        ) : (
-          <>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-              {plants.map(plant => (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          {plants.map(plant => (
                 <div
                   key={plant.id}
                   onClick={() => setSelectedPlant(plant)}
@@ -592,8 +643,83 @@ const PlukApp = () => {
                 <p className="text-gray-500">Adicione sua primeira planta para começar!</p>
               </div>
             )}
-          </>
-        )}
+
+            {/* Mapa de Lojas no Final da Página */}
+            <div className="mt-12 bg-white rounded-3xl shadow-xl p-8">
+              <div className="flex justify-between items-center mb-6">
+                <div>
+                  <h2 className="text-3xl font-bold text-gray-800 flex items-center gap-3 mb-2">
+                    <Store size={32} className="text-green-600" />
+                    Lojas de Jardinagem Próximas
+                  </h2>
+                  <p className="text-gray-600">Encontre lojas perto de você</p>
+                </div>
+                <button
+                  onClick={findNearbyStores}
+                  disabled={loading}
+                  className="flex items-center gap-2 px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition disabled:opacity-50"
+                >
+                  <MapPin size={20} />
+                  {loading ? 'Buscando...' : 'Buscar Lojas'}
+                </button>
+              </div>
+
+              {userLocation && (
+                <div className="mb-6 p-4 bg-green-50 rounded-lg flex items-center gap-2">
+                  <MapPin size={20} className="text-green-600" />
+                  <span className="text-sm text-gray-700">
+                    Sua localização: {userLocation.lat.toFixed(4)}, {userLocation.lng.toFixed(4)}
+                  </span>
+                </div>
+              )}
+
+              {nearbyStores.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {nearbyStores.map(store => (
+                    <div key={store.id} className="border border-gray-200 rounded-xl p-5 hover:shadow-lg transition">
+                      <h3 className="text-lg font-bold text-gray-800 mb-2">{store.name}</h3>
+                      <p className="text-gray-600 text-sm mb-3">{store.address}</p>
+                      <div className="flex items-center gap-3 text-sm mb-3">
+                        <span className="text-green-600 font-semibold flex items-center gap-1">
+                          <Navigation size={14} />
+                          {store.distance}
+                        </span>
+                        {store.phone && store.phone !== 'Não disponível' && (
+                          <span className="text-gray-600 text-xs">📞 {store.phone}</span>
+                        )}
+                      </div>
+                      {store.website && (
+                        <a 
+                          href={store.website} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-blue-600 text-sm hover:underline mb-3 inline-block"
+                        >
+                          🌐 Visitar site
+                        </a>
+                      )}
+                      <button
+                        onClick={() => openGoogleMaps(store.lat, store.lng, store.name)}
+                        className="w-full flex items-center justify-center gap-2 bg-blue-500 text-white py-2 rounded-lg font-semibold hover:bg-blue-600 transition mt-2"
+                      >
+                        <Navigation size={16} />
+                        Ver no Mapa
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-10">
+                  <Store size={48} className="text-gray-400 mx-auto mb-4" />
+                  <p className="text-gray-600">
+                    {userLocation 
+                      ? 'Nenhuma loja encontrada nas proximidades (raio de 5km)' 
+                      : 'Clique em "Buscar Lojas" para encontrar lojas próximas'}
+                  </p>
+                </div>
+              )}
+            </div>
+        )&rbrace;
       </main>
 
       {/* Modal Adicionar Planta */}
@@ -624,14 +750,28 @@ const PlukApp = () => {
               
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Espécie</label>
-                <input
-                  type="text"
-                  value={newPlant.species}
-                  onChange={(e) => setNewPlant({ ...newPlant, species: e.target.value })}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
-                  placeholder="Ex: Aloe Vera"
-                  disabled={loading}
-                />
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newPlant.species}
+                    onChange={(e) => setNewPlant({ ...newPlant, species: e.target.value })}
+                    className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
+                    placeholder="Ex: Aloe Vera"
+                    disabled={loading || identifyingPlant}
+                  />
+                  <button
+                    onClick={identifyPlantSpecies}
+                    disabled={loading || identifyingPlant || !newPlant.photoURL}
+                    className="flex items-center gap-2 bg-purple-500 text-white px-4 py-3 rounded-lg font-semibold hover:bg-purple-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    title={!newPlant.photoURL ? 'Adicione uma foto primeiro' : 'Identificar com PlantAI'}
+                  >
+                    <Search size={18} />
+                    {identifyingPlant ? '...' : 'AI'}
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  💡 Adicione uma foto e clique em "AI" para identificar automaticamente
+                </p>
               </div>
               
               <div>
@@ -746,79 +886,6 @@ const PlukApp = () => {
                 <Trash2 size={20} />
                 Remover Planta
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal Mapa de Lojas */}
-      {showMap && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl shadow-2xl p-8 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
-                <Store size={28} className="text-green-600" />
-                Lojas de Jardinagem Próximas
-              </h2>
-              <button onClick={() => setShowMap(false)} className="text-gray-500 hover:text-gray-700">
-                <X size={24} />
-              </button>
-            </div>
-
-            {userLocation && (
-              <div className="mb-6 p-4 bg-green-50 rounded-lg flex items-center gap-2">
-                <MapPin size={20} className="text-green-600" />
-                <span className="text-sm text-gray-700">
-                  Sua localização: {userLocation.lat.toFixed(4)}, {userLocation.lng.toFixed(4)}
-                </span>
-              </div>
-            )}
-            
-            <div className="space-y-4">
-              {nearbyStores.map(store => (
-                <div key={store.id} className="border border-gray-200 rounded-xl p-6 hover:shadow-lg transition">
-                  <div className="flex justify-between items-start mb-3">
-                    <div>
-                      <h3 className="text-xl font-bold text-gray-800 mb-1">{store.name}</h3>
-                      <p className="text-gray-600 text-sm mb-1">{store.address}</p>
-                      <div className="flex items-center gap-3 text-sm">
-                        <span className="text-green-600 font-semibold flex items-center gap-1">
-                          <Navigation size={14} />
-                          {store.distance}
-                        </span>
-                        {store.phone && store.phone !== 'Não disponível' && (
-                          <span className="text-gray-600">📞 {store.phone}</span>
-                        )}
-                      </div>
-                      {store.website && (
-                        <a 
-                          href={store.website} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          className="text-blue-600 text-sm hover:underline mt-1 inline-block"
-                        >
-                          🌐 Visitar site
-                        </a>
-                      )}
-                    </div>
-                  </div>
-                  
-                  <button
-                    onClick={() => openGoogleMaps(store.lat, store.lng, store.name)}
-                    className="w-full flex items-center justify-center gap-2 bg-blue-500 text-white py-3 rounded-lg font-semibold hover:bg-blue-600 transition"
-                  >
-                    <Navigation size={18} />
-                    Ver no Google Maps
-                  </button>
-                </div>
-              ))}
-
-              {nearbyStores.length === 0 && (
-                <div className="text-center py-10">
-                  <Store size={48} className="text-gray-400 mx-auto mb-4" />
-                  <p className="text-gray-600">Nenhuma loja encontrada nas proximidades</p>
-                </div>
-              )}
             </div>
           </div>
         </div>
