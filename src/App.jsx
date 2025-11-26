@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Camera, Droplets, Sun, Plus, X, Trash2, LogOut, User, MapPin, Store, Navigation } from 'lucide-react';
+import { Camera, Droplets, Sun, Plus, X, Trash2, LogOut, User, MapPin, Store, Navigation, Search, Send } from 'lucide-react';
 
 // Imports do Firebase (certifique-se de ter um arquivo firebaseConfig.js)
 import { initializeApp } from 'firebase/app';
@@ -16,7 +16,6 @@ const firebaseConfig = {
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
   appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
-
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -46,6 +45,10 @@ const PlukApp = () => {
   const [loading, setLoading] = useState(false);
   const [userLocation, setUserLocation] = useState(null);
   const [nearbyStores, setNearbyStores] = useState([]);
+  const [showPlantAI, setShowPlantAI] = useState(false);
+  const [aiQuestion, setAiQuestion] = useState('');
+  const [aiResponse, setAiResponse] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
   const [newPlant, setNewPlant] = useState({
     type: 'suculenta',
     species: '',
@@ -379,6 +382,49 @@ const PlukApp = () => {
     return parts.length > 0 ? parts.join(', ') : 'Endereço não disponível';
   };
 
+  // PlantAI - Perguntas sobre plantas usando Claude API
+  const handleAIQuestion = async () => {
+    if (!aiQuestion.trim()) {
+      alert('Digite uma pergunta sobre plantas!');
+      return;
+    }
+
+    setAiLoading(true);
+    setAiResponse('');
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1000,
+          messages: [
+            {
+              role: 'user',
+              content: `Você é um especialista em plantas e jardinagem. Responda de forma clara, amigável e prática em português brasileiro. Pergunta: ${aiQuestion}`
+            }
+          ]
+        })
+      });
+
+      const data = await response.json();
+      
+      if (data.content && data.content[0]) {
+        setAiResponse(data.content[0].text);
+      } else {
+        setAiResponse('Desculpe, não consegui processar sua pergunta. Tente novamente!');
+      }
+    } catch (error) {
+      console.error('Erro ao consultar PlantAI:', error);
+      setAiResponse('Erro ao conectar com a PlantAI. Verifique sua conexão e tente novamente.');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   const openGoogleMaps = (lat, lng, name) => {
     window.open(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}&query_place_id=${encodeURIComponent(name)}`, '_blank');
   };
@@ -457,6 +503,13 @@ const PlukApp = () => {
         <div className="max-w-7xl mx-auto flex justify-between items-center">
           <h1 className="text-3xl font-bold text-green-600">🌱 Pluk</h1>
           <div className="flex items-center gap-4">
+            <button
+              onClick={() => setShowPlantAI(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition"
+            >
+              <Search size={18} />
+              <span className="hidden sm:inline">PlantAI</span>
+            </button>
             <button
               onClick={findNearbyStores}
               className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition"
@@ -767,6 +820,73 @@ const PlukApp = () => {
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal PlantAI */}
+      {showPlantAI && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-3xl shadow-2xl p-8 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                <Search size={28} className="text-purple-600" />
+                PlantAI - Sua Assistente de Jardinagem
+              </h2>
+              <button onClick={() => setShowPlantAI(false)} className="text-gray-500 hover:text-gray-700">
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="mb-6 p-4 bg-purple-50 rounded-lg">
+              <p className="text-sm text-gray-700">
+                💡 Pergunte qualquer coisa sobre plantas! Como cuidar, identificar pragas, quando regar, melhores adubos, etc.
+              </p>
+            </div>
+
+            <div className="mb-6">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={aiQuestion}
+                  onChange={(e) => setAiQuestion(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && !aiLoading && handleAIQuestion()}
+                  placeholder="Ex: Como cuidar de suculentas no verão?"
+                  className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                  disabled={aiLoading}
+                />
+                <button
+                  onClick={handleAIQuestion}
+                  disabled={aiLoading}
+                  className="flex items-center gap-2 bg-purple-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-purple-600 transition disabled:opacity-50"
+                >
+                  {aiLoading ? '...' : <Send size={20} />}
+                </button>
+              </div>
+            </div>
+
+            {aiLoading && (
+              <div className="text-center py-8">
+                <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-purple-500 border-t-transparent"></div>
+                <p className="text-gray-600 mt-4">PlantAI está pensando...</p>
+              </div>
+            )}
+
+            {aiResponse && !aiLoading && (
+              <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-6 border border-purple-200">
+                <h3 className="font-bold text-purple-800 mb-3 flex items-center gap-2">
+                  🤖 Resposta da PlantAI:
+                </h3>
+                <p className="text-gray-800 whitespace-pre-wrap leading-relaxed">{aiResponse}</p>
+              </div>
+            )}
+
+            {!aiResponse && !aiLoading && (
+              <div className="text-center py-10 text-gray-400">
+                <Search size={48} className="mx-auto mb-4 opacity-50" />
+                <p>Faça uma pergunta para começar!</p>
+              </div>
+            )}
           </div>
         </div>
       )}
