@@ -79,7 +79,7 @@ const PlukApp = () => {
     nickname: '',
     photo: null
   });
-  const [useFirebase, setUseFirebase] = useState(false); // Toggle para usar Firebase ou SessionStorage
+  const [useFirebase, setUseFirebase] = useState(true); // Toggle para usar Firebase ou SessionStorage
 
   // ============================================================================
   // FIREBASE AUTH LISTENER
