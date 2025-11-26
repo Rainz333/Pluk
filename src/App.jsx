@@ -50,6 +50,7 @@ const PlukApp = () => {
   const [aiResponse, setAiResponse] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [identifyingPlant, setIdentifyingPlant] = useState(false);
+  const [mapLoading, setMapLoading] = useState(false);
   const [newPlant, setNewPlant] = useState({
     type: 'suculenta',
     species: '',
@@ -134,10 +135,15 @@ const PlukApp = () => {
   const uploadPhoto = async (file) => {
     if (!file) return null;
     
-    const storageRef = ref(storage, `plants/${user.uid}/${Date.now()}_${file.name}`);
-    await uploadBytes(storageRef, file);
-    const url = await getDownloadURL(storageRef);
-    return url;
+    try {
+      const storageRef = ref(storage, `plants/${user.uid}/${Date.now()}_${file.name}`);
+      await uploadBytes(storageRef, file);
+      const url = await getDownloadURL(storageRef);
+      return url;
+    } catch (error) {
+      console.error('Erro no upload da foto:', error);
+      throw error;
+    }
   };
 
   // Adicionar planta ao Firestore
@@ -152,14 +158,20 @@ const PlukApp = () => {
       const plantType = PLANT_TYPES[newPlant.type];
       let photoURL = null;
 
+      // Upload da foto se existir
       if (newPlant.photoFile) {
-        photoURL = await uploadPhoto(newPlant.photoFile);
+        try {
+          photoURL = await uploadPhoto(newPlant.photoFile);
+        } catch (uploadError) {
+          console.error('Erro ao fazer upload da foto:', uploadError);
+          // Continua sem a foto se houver erro
+        }
       }
 
       const plant = {
         userId: user.uid,
         type: newPlant.type,
-        species: newPlant.species,
+        species: newPlant.species || '',
         nickname: newPlant.nickname,
         photoURL: photoURL,
         typeName: plantType.name,
@@ -176,8 +188,10 @@ const PlukApp = () => {
 
       await addDoc(collection(db, 'plants'), plant);
       
+      // Resetar formulário
       setShowAddPlant(false);
       setNewPlant({ type: 'suculenta', species: '', nickname: '', photoFile: null, photoURL: null });
+      alert('✅ Planta adicionada com sucesso!');
     } catch (error) {
       console.error('Erro ao adicionar planta:', error);
       alert('Erro ao adicionar planta: ' + error.message);
@@ -274,19 +288,19 @@ const PlukApp = () => {
       return;
     }
 
-    setLoading(true);
+    setMapLoading(true);
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const { latitude, longitude } = position.coords;
         setUserLocation({ lat: latitude, lng: longitude });
         
-        // Buscar lojas usando Google Places API
+        // Buscar lojas usando OpenStreetMap
         searchNearbyPlantStores(latitude, longitude);
       },
       (error) => {
         console.error('Erro ao obter localização:', error);
         alert('Não foi possível obter sua localização. Verifique as permissões.');
-        setLoading(false);
+        setMapLoading(false);
       }
     );
   };
@@ -346,13 +360,11 @@ const PlukApp = () => {
         setNearbyStores([]);
         alert('Nenhuma loja de jardinagem encontrada nas proximidades (raio de 5km).');
       }
-      
-      setShowMap(true);
     } catch (error) {
       console.error('Erro ao buscar lojas:', error);
       alert('Erro ao buscar lojas próximas! Verifique sua conexão.');
     } finally {
-      setLoading(false);
+      setMapLoading(false);
     }
   };
 
@@ -656,38 +668,71 @@ const PlukApp = () => {
                 </div>
                 <button
                   onClick={findNearbyStores}
-                  disabled={loading}
+                  disabled={mapLoading}
                   className="flex items-center gap-2 px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition disabled:opacity-50"
                 >
                   <MapPin size={20} />
-                  {loading ? 'Buscando...' : 'Buscar Lojas'}
+                  {mapLoading ? 'Buscando...' : 'Buscar Lojas'}
                 </button>
               </div>
 
-              {userLocation && (
-                <div className="mb-6 p-4 bg-green-50 rounded-lg flex items-center gap-2">
-                  <MapPin size={20} className="text-green-600" />
-                  <span className="text-sm text-gray-700">
-                    Sua localização: {userLocation.lat.toFixed(4)}, {userLocation.lng.toFixed(4)}
-                  </span>
+              {mapLoading && (
+                <div className="text-center py-12">
+                  <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent mb-4"></div>
+                  <p className="text-gray-600">Buscando lojas próximas...</p>
                 </div>
               )}
 
-              {nearbyStores.length > 0 ? (
+              {!mapLoading && userLocation && (
+                <>
+                  {/* Mapa Interativo */}
+                  <div className="mb-6 rounded-xl overflow-hidden border-2 border-gray-200">
+                    <iframe
+                      width="100%"
+                      height="400"
+                      frameBorder="0"
+                      scrolling="no"
+                      marginHeight="0"
+                      marginWidth="0"
+                      src={`https://www.openstreetmap.org/export/embed.html?bbox=${userLocation.lng-0.02},${userLocation.lat-0.02},${userLocation.lng+0.02},${userLocation.lat+0.02}&layer=mapnik&marker=${userLocation.lat},${userLocation.lng}`}
+                      style={{ border: 0 }}
+                    ></iframe>
+                  </div>
+
+                  <div className="mb-6 p-4 bg-green-50 rounded-lg flex items-center gap-2">
+                    <MapPin size={20} className="text-green-600" />
+                    <span className="text-sm text-gray-700">
+                      📍 Você está aqui: {userLocation.lat.toFixed(4)}, {userLocation.lng.toFixed(4)}
+                    </span>
+                  </div>
+                </>
+              )}
+
+              {!mapLoading && nearbyStores.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {nearbyStores.map(store => (
-                    <div key={store.id} className="border border-gray-200 rounded-xl p-5 hover:shadow-lg transition">
-                      <h3 className="text-lg font-bold text-gray-800 mb-2">{store.name}</h3>
-                      <p className="text-gray-600 text-sm mb-3">{store.address}</p>
-                      <div className="flex items-center gap-3 text-sm mb-3">
-                        <span className="text-green-600 font-semibold flex items-center gap-1">
+                    <div key={store.id} className="border border-gray-200 rounded-xl p-5 hover:shadow-lg transition bg-gradient-to-br from-white to-green-50">
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex-1">
+                          <h3 className="text-lg font-bold text-gray-800 mb-1 flex items-center gap-2">
+                            🏪 {store.name}
+                          </h3>
+                          <p className="text-gray-600 text-sm mb-2">{store.address}</p>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-3 text-sm mb-3 flex-wrap">
+                        <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full font-semibold flex items-center gap-1">
                           <Navigation size={14} />
                           {store.distance}
                         </span>
                         {store.phone && store.phone !== 'Não disponível' && (
-                          <span className="text-gray-600 text-xs">📞 {store.phone}</span>
+                          <span className="text-gray-600 text-xs bg-gray-100 px-2 py-1 rounded">
+                            📞 {store.phone}
+                          </span>
                         )}
                       </div>
+                      
                       {store.website && (
                         <a 
                           href={store.website} 
@@ -698,26 +743,45 @@ const PlukApp = () => {
                           🌐 Visitar site
                         </a>
                       )}
+                      
                       <button
                         onClick={() => openGoogleMaps(store.lat, store.lng, store.name)}
                         className="w-full flex items-center justify-center gap-2 bg-blue-500 text-white py-2 rounded-lg font-semibold hover:bg-blue-600 transition mt-2"
                       >
                         <Navigation size={16} />
-                        Ver no Mapa
+                        Como Chegar
                       </button>
                     </div>
                   ))}
                 </div>
-              ) : (
-                <div className="text-center py-10">
+              ) : !mapLoading && userLocation && nearbyStores.length === 0 ? (
+                <div className="text-center py-10 bg-gray-50 rounded-xl">
                   <Store size={48} className="text-gray-400 mx-auto mb-4" />
-                  <p className="text-gray-600">
-                    {userLocation 
-                      ? 'Nenhuma loja encontrada nas proximidades (raio de 5km)' 
-                      : 'Clique em "Buscar Lojas" para encontrar lojas próximas'}
+                  <p className="text-gray-600 font-medium">
+                    Nenhuma loja encontrada em um raio de 5km
+                  </p>
+                  <p className="text-gray-500 text-sm mt-2">
+                    Tente em outra localização ou amplie o raio de busca
                   </p>
                 </div>
-              )}
+              ) : !mapLoading && !userLocation ? (
+                <div className="text-center py-16 bg-gradient-to-br from-blue-50 to-green-50 rounded-xl">
+                  <MapPin size={64} className="text-blue-500 mx-auto mb-4" />
+                  <h3 className="text-xl font-bold text-gray-800 mb-2">
+                    Encontre lojas perto de você!
+                  </h3>
+                  <p className="text-gray-600 mb-4">
+                    Clique em "Buscar Lojas" para ver jardinarias próximas
+                  </p>
+                  <button
+                    onClick={findNearbyStores}
+                    className="inline-flex items-center gap-2 px-8 py-3 bg-blue-500 text-white rounded-full font-semibold hover:bg-blue-600 transition shadow-lg"
+                  >
+                    <Search size={20} />
+                    Buscar Agora
+                  </button>
+                </div>
+              ) : null}
             </div>
         )&rbrace;
       </main>
