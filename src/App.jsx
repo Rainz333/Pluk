@@ -1,5 +1,26 @@
 import React, { useState, useEffect } from 'react';
-import { Camera, Droplets, Sun, Plus, X, Trash2, LogOut, User, Moon, Search, Wind, Eye, EyeOff } from 'lucide-react';
+import { Camera, Droplets, Sun, Plus, X, Trash2, LogOut, User, MapPin, Store, Navigation, Search, Send } from 'lucide-react';
+
+// Imports do Firebase (certifique-se de ter um arquivo firebaseConfig.js)
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
+import { getFirestore, collection, addDoc, query, where, getDocs, doc, updateDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
+import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+
+// Configure seu Firebase aqui
+const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const storage = getStorage(app);
 
 const PLANT_TYPES = {
   suculenta: { name: 'Suculenta', icon: '🌵', waterDays: 7, sunHours: 4 },
@@ -11,381 +32,471 @@ const PLANT_TYPES = {
 };
 
 const PlukApp = () => {
-  const [darkMode, setDarkMode] = useState(false);
   const [user, setUser] = useState(null);
   const [plants, setPlants] = useState([]);
   const [selectedPlant, setSelectedPlant] = useState(null);
   const [showAddPlant, setShowAddPlant] = useState(false);
   const [showLogin, setShowLogin] = useState(true);
+  const [showMap, setShowMap] = useState(false);
   const [sunHours, setSunHours] = useState('');
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-  const [showForgotPassword, setShowForgotPassword] = useState(false);
-  const [recoveryEmail, setRecoveryEmail] = useState('');
-  const [securityQuestion, setSecurityQuestion] = useState('');
-  const [securityAnswer, setSecurityAnswer] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [recoveryStep, setRecoveryStep] = useState(1);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState('');
-  const [showSearchResults, setShowSearchResults] = useState(false);
-  const [isSearching, setIsSearching] = useState(false);
-  const [weather, setWeather] = useState(null);
-  const [showWeatherDetail, setShowWeatherDetail] = useState(false);
-  const [userLocation, setUserLocation] = useState({ lat: -23.55, lon: -46.63 });
-  const [isIdentifyingPlant, setIsIdentifyingPlant] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [userLocation, setUserLocation] = useState(null);
+  const [nearbyStores, setNearbyStores] = useState([]);
+  const [showPlantAI, setShowPlantAI] = useState(false);
+  const [aiQuestion, setAiQuestion] = useState('');
+  const [aiResponse, setAiResponse] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [identifyingPlant, setIdentifyingPlant] = useState(false);
+  const [mapLoading, setMapLoading] = useState(false);
   const [newPlant, setNewPlant] = useState({
     type: 'suculenta',
     species: '',
     nickname: '',
-    photo: null
+    photoFile: null,
+    photoURL: null
   });
 
+  // Monitora autenticação
   useEffect(() => {
-    const savedUser = sessionStorage.getItem('plukUser');
-    const savedDarkMode = sessionStorage.getItem('plukDarkMode');
-    
-    if (savedDarkMode) {
-      setDarkMode(JSON.parse(savedDarkMode));
-    }
-    
-    if (savedUser) {
-      const userData = JSON.parse(savedUser);
-      setUser(userData);
-      setShowLogin(false);
-      loadUserPlants(userData.email);
-      getUserLocation();
-      fetchWeather();
-    }
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      if (currentUser) {
+        setUser(currentUser);
+        setShowLogin(false);
+        loadUserPlants(currentUser.uid);
+      } else {
+        setUser(null);
+        setPlants([]);
+        setShowLogin(true);
+      }
+    });
+
+    return () => unsubscribe();
   }, []);
 
-  useEffect(() => {
-    sessionStorage.setItem('plukDarkMode', JSON.stringify(darkMode));
-  }, [darkMode]);
-
-  const getUserLocation = () => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setUserLocation({
-            lat: position.coords.latitude,
-            lon: position.coords.longitude
-          });
-        },
-        (error) => {
-          console.log('Usando localizacao padrao');
-        }
-      );
-    }
-  };
-
-  const fetchWeather = async () => {
-    try {
-      const response = await fetch(
-        `https://api.open-meteo.com/v1/forecast?latitude=${userLocation.lat}&longitude=${userLocation.lon}&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&timezone=auto`
-      );
-      const data = await response.json();
-      setWeather(data.current);
-    } catch (error) {
-      console.error('Erro ao buscar clima:', error);
-      setWeather({
-        temperature_2m: 22,
-        relative_humidity_2m: 65,
-        wind_speed_10m: 12,
-        weather_code: 0
+  // Carrega plantas do Firestore em tempo real
+  const loadUserPlants = (userId) => {
+    const q = query(collection(db, 'plants'), where('userId', '==', userId));
+    
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const userPlants = [];
+      querySnapshot.forEach((doc) => {
+        userPlants.push({ id: doc.id, ...doc.data() });
       });
-    }
+      setPlants(userPlants);
+    }, (error) => {
+      console.error('Erro ao carregar plantas:', error);
+    });
+
+    return unsubscribe;
   };
 
-  const getWeatherDescription = (code) => {
-    const descriptions = {
-      0: { text: 'Ceu Limpo', icon: '☀️' },
-      1: { text: 'Principalmente Limpo', icon: '🌤️' },
-      2: { text: 'Parcialmente Nublado', icon: '⛅' },
-      3: { text: 'Nublado', icon: '☁️' },
-      45: { text: 'Neblina', icon: '🌫️' },
-      48: { text: 'Neblina', icon: '🌫️' },
-      51: { text: 'Garoa Leve', icon: '🌦️' },
-      61: { text: 'Chuva Leve', icon: '🌧️' },
-      80: { text: 'Pancadas de Chuva', icon: '⛈️' },
-      95: { text: 'Tempestade', icon: '⛈️' },
-    };
-    return descriptions[code] || { text: 'Desconhecido', icon: '🌡️' };
-  };
-
-  const identifyPlantFromImage = async (imageData) => {
-    setIsIdentifyingPlant(true);
-    try {
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      const possiblePlants = [
-        'Monstera deliciosa', 'Ficus elastica', 'Pothos aureus',
-        'Spathiphyllum wallisii', 'Zamioculcas zamiifolia', 
-        'Aloe vera', 'Sansevieria trifasciata', 'Dracaena marginata'
-      ];
-      const identified = possiblePlants[Math.floor(Math.random() * possiblePlants.length)];
-      
-      setNewPlant(prev => ({ ...prev, species: identified, photo: imageData }));
-      setIsIdentifyingPlant(false);
-    } catch (error) {
-      console.error('Erro ao identificar planta:', error);
-      setIsIdentifyingPlant(false);
-    }
-  };
-
-  const searchPlantAI = async (query) => {
-    if (!query.trim()) return;
-    
-    setIsSearching(true);
-    setShowSearchResults(true);
-    
-    try {
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      const responses = {
-        'regar': 'A frequencia de rega depende do tipo de planta. Suculentas precisam de agua a cada 7-10 dias, enquanto samambaias precisam de rega a cada 2-3 dias.',
-        'sol': 'A maioria das plantas precisa de 4-6 horas de luz solar indireta por dia. Cactos precisam de mais sol direto.',
-        'folhas amarelas': 'Folhas amarelas podem indicar excesso de agua, falta de nutrientes ou luz inadequada.',
-        'adubo': 'Use fertilizante liquido balanceado a cada 15-30 dias durante a primavera e verao.',
-        'pragas': 'Para pragas comuns, use uma mistura de agua com sabao neutro. Pulverize nas folhas afetadas.',
-        'default': `Sobre "${query}": Cada planta tem necessidades especificas. Verifique o tipo da sua planta para cuidados adequados.`
-      };
-      
-      const lowerQuery = query.toLowerCase();
-      let response = responses.default;
-      
-      for (const [key, value] of Object.entries(responses)) {
-        if (lowerQuery.includes(key)) {
-          response = value;
-          break;
-        }
-      }
-      
-      setSearchResults(response);
-    } catch (error) {
-      setSearchResults('Desculpe, nao consegui processar sua pergunta.');
-    } finally {
-      setIsSearching(false);
-    }
-  };
-
-  const loadUserPlants = (email) => {
-    const savedPlants = sessionStorage.getItem(`plukPlants_${email}`);
-    if (savedPlants) {
-      setPlants(JSON.parse(savedPlants));
-    }
-  };
-
-  const savePlants = (updatedPlants, userEmail) => {
-    sessionStorage.setItem(`plukPlants_${userEmail}`, JSON.stringify(updatedPlants));
-    setPlants(updatedPlants);
-  };
-
-  const handleLogin = () => {
-    if (!loginEmail || !loginPassword) return;
-
-    if (isRegistering) {
-      if (!securityQuestion || !securityAnswer) {
-        alert('Por favor, preencha a pergunta e resposta de seguranca!');
-        return;
-      }
-      
-      const users = JSON.parse(sessionStorage.getItem('plukUsers') || '[]');
-      const existingUser = users.find(u => u.email === loginEmail);
-      
-      if (existingUser) {
-        alert('Usuario ja existe!');
-        return;
-      }
-      
-      const newUser = { 
-        email: loginEmail, 
-        password: loginPassword,
-        securityQuestion: securityQuestion,
-        securityAnswer: securityAnswer.toLowerCase()
-      };
-      users.push(newUser);
-      sessionStorage.setItem('plukUsers', JSON.stringify(users));
-      sessionStorage.setItem('plukUser', JSON.stringify(newUser));
-      setUser(newUser);
-      setShowLogin(false);
-      loadUserPlants(loginEmail);
-      getUserLocation();
-      fetchWeather();
-      setSecurityQuestion('');
-      setSecurityAnswer('');
-    } else {
-      const users = JSON.parse(sessionStorage.getItem('plukUsers') || '[]');
-      const foundUser = users.find(u => u.email === loginEmail && u.password === loginPassword);
-      
-      if (foundUser) {
-        sessionStorage.setItem('plukUser', JSON.stringify(foundUser));
-        setUser(foundUser);
-        setShowLogin(false);
-        loadUserPlants(loginEmail);
-        getUserLocation();
-        fetchWeather();
-      } else {
-        alert('Email ou senha incorretos!');
-      }
-    }
-  };
-
-  const handleForgotPassword = () => {
-    if (recoveryStep === 1) {
-      if (!recoveryEmail) {
-        alert('Digite seu email!');
-        return;
-      }
-      
-      const users = JSON.parse(sessionStorage.getItem('plukUsers') || '[]');
-      const user = users.find(u => u.email === recoveryEmail);
-      
-      if (!user) {
-        alert('Email nao encontrado!');
-        return;
-      }
-      
-      // Se o usuário não tem pergunta de segurança (usuário antigo)
-      if (!user.securityQuestion) {
-        setRecoveryStep(3); // Pula direto para redefinir senha
-      } else {
-        setRecoveryStep(2); // Vai para pergunta de segurança
-      }
-    } else if (recoveryStep === 2) {
-      const users = JSON.parse(sessionStorage.getItem('plukUsers') || '[]');
-      const user = users.find(u => u.email === recoveryEmail);
-      
-      if (securityAnswer.toLowerCase() !== user.securityAnswer) {
-        alert('Resposta incorreta!');
-        return;
-      }
-      
-      setRecoveryStep(3);
-    } else if (recoveryStep === 3) {
-      if (!newPassword || newPassword.length < 6) {
-        alert('A senha deve ter pelo menos 6 caracteres!');
-        return;
-      }
-      
-      const users = JSON.parse(sessionStorage.getItem('plukUsers') || '[]');
-      const userIndex = users.findIndex(u => u.email === recoveryEmail);
-      
-      if (userIndex !== -1) {
-        users[userIndex].password = newPassword;
-        
-        // Se for usuário antigo, aproveita para adicionar pergunta de segurança
-        if (!users[userIndex].securityQuestion && securityQuestion && securityAnswer) {
-          users[userIndex].securityQuestion = securityQuestion;
-          users[userIndex].securityAnswer = securityAnswer.toLowerCase();
-        }
-        
-        sessionStorage.setItem('plukUsers', JSON.stringify(users));
-        alert('Senha alterada com sucesso!');
-        setShowForgotPassword(false);
-        setRecoveryStep(1);
-        setRecoveryEmail('');
-        setSecurityAnswer('');
-        setNewPassword('');
-        setSecurityQuestion('');
-      }
-    }
-  };
-
-  const handleLogout = () => {
-    sessionStorage.removeItem('plukUser');
-    setUser(null);
-    setPlants([]);
-    setShowLogin(true);
-  };
-
-  const handleAddPlant = () => {
-    if (!newPlant.nickname) {
-      alert('Por favor, de um apelido para sua planta!');
+  // Login/Registro com Firebase Auth
+  const handleLogin = async () => {
+    if (!loginEmail || !loginPassword) {
+      alert('Preencha email e senha!');
       return;
     }
 
-    const plantType = PLANT_TYPES[newPlant.type];
-    const plant = {
-      id: Date.now(),
-      ...newPlant,
-      typeName: plantType.name,
-      icon: plantType.icon,
-      nextWater: Date.now() + (plantType.waterDays * 24 * 60 * 60 * 1000),
-      nextSun: Date.now() + (plantType.sunHours * 60 * 60 * 1000),
-      waterDays: plantType.waterDays,
-      sunHours: plantType.sunHours,
-      totalSunHours: 0,
-      lastWatered: Date.now(),
-      lastSunned: Date.now()
-    };
-
-    const updatedPlants = [...plants, plant];
-    savePlants(updatedPlants, user.email);
-    setShowAddPlant(false);
-    setNewPlant({ type: 'suculenta', species: '', nickname: '', photo: null });
-  };
-
-  const handleWaterPlant = (plantId) => {
-    const updatedPlants = plants.map(p => {
-      if (p.id === plantId) {
-        return {
-          ...p,
-          nextWater: Date.now() + (p.waterDays * 24 * 60 * 60 * 1000),
-          lastWatered: Date.now()
-        };
+    setLoading(true);
+    try {
+      if (isRegistering) {
+        await createUserWithEmailAndPassword(auth, loginEmail, loginPassword);
+      } else {
+        await signInWithEmailAndPassword(auth, loginEmail, loginPassword);
       }
-      return p;
-    });
-    savePlants(updatedPlants, user.email);
-    if (selectedPlant?.id === plantId) {
-      setSelectedPlant(updatedPlants.find(p => p.id === plantId));
+    } catch (error) {
+      if (error.code === 'auth/email-already-in-use') {
+        alert('Este email já está cadastrado!');
+      } else if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
+        alert('Email ou senha incorretos!');
+      } else if (error.code === 'auth/weak-password') {
+        alert('A senha deve ter pelo menos 6 caracteres!');
+      } else {
+        alert('Erro: ' + error.message);
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleSunPlant = (plantId) => {
+  // Logout
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error('Erro ao fazer logout:', error);
+    }
+  };
+
+  // Upload de foto para Firebase Storage
+  const uploadPhoto = async (file) => {
+    if (!file) return null;
+    
+    try {
+      const storageRef = ref(storage, `plants/${user.uid}/${Date.now()}_${file.name}`);
+      await uploadBytes(storageRef, file);
+      const url = await getDownloadURL(storageRef);
+      return url;
+    } catch (error) {
+      console.error('Erro no upload da foto:', error);
+      throw error;
+    }
+  };
+
+  // Adicionar planta ao Firestore
+  const handleAddPlant = async () => {
+    if (!newPlant.nickname) {
+      alert('Por favor, dê um apelido para sua planta!');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const plantType = PLANT_TYPES[newPlant.type];
+      let photoURL = null;
+
+      // Upload da foto se existir
+      if (newPlant.photoFile) {
+        try {
+          photoURL = await uploadPhoto(newPlant.photoFile);
+        } catch (uploadError) {
+          console.error('Erro ao fazer upload da foto:', uploadError);
+          // Continua sem a foto se houver erro
+        }
+      }
+
+      const plant = {
+        userId: user.uid,
+        type: newPlant.type,
+        species: newPlant.species || '',
+        nickname: newPlant.nickname,
+        photoURL: photoURL,
+        typeName: plantType.name,
+        icon: plantType.icon,
+        nextWater: Date.now() + (plantType.waterDays * 24 * 60 * 60 * 1000),
+        nextSun: Date.now() + (plantType.sunHours * 60 * 60 * 1000),
+        waterDays: plantType.waterDays,
+        sunHours: plantType.sunHours,
+        totalSunHours: 0,
+        lastWatered: Date.now(),
+        lastSunned: Date.now(),
+        createdAt: Date.now()
+      };
+
+      await addDoc(collection(db, 'plants'), plant);
+      
+      // Resetar formulário
+      setShowAddPlant(false);
+      setNewPlant({ type: 'suculenta', species: '', nickname: '', photoFile: null, photoURL: null });
+      alert('✅ Planta adicionada com sucesso!');
+    } catch (error) {
+      console.error('Erro ao adicionar planta:', error);
+      alert('Erro ao adicionar planta: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Atualizar rega no Firestore
+  const handleWaterPlant = async (plantId) => {
+    try {
+      const plant = plants.find(p => p.id === plantId);
+      if (!plant) return;
+
+      const plantRef = doc(db, 'plants', plantId);
+      await updateDoc(plantRef, {
+        nextWater: Date.now() + (plant.waterDays * 24 * 60 * 60 * 1000),
+        lastWatered: Date.now()
+      });
+
+      if (selectedPlant?.id === plantId) {
+        setSelectedPlant({ ...selectedPlant, nextWater: Date.now() + (plant.waterDays * 24 * 60 * 60 * 1000), lastWatered: Date.now() });
+      }
+    } catch (error) {
+      console.error('Erro ao regar planta:', error);
+      alert('Erro ao atualizar rega!');
+    }
+  };
+
+  // Atualizar sol no Firestore
+  const handleSunPlant = async (plantId) => {
     const hours = parseFloat(sunHours);
     if (!hours || hours <= 0) {
-      alert('Digite um valor valido de horas!');
+      alert('Digite um valor válido de horas!');
       return;
     }
 
-    const updatedPlants = plants.map(p => {
-      if (p.id === plantId) {
-        return {
-          ...p,
-          nextSun: Date.now() + (p.sunHours * 60 * 60 * 1000),
+    try {
+      const plant = plants.find(p => p.id === plantId);
+      if (!plant) return;
+
+      const plantRef = doc(db, 'plants', plantId);
+      await updateDoc(plantRef, {
+        nextSun: Date.now() + (plant.sunHours * 60 * 60 * 1000),
+        lastSunned: Date.now(),
+        totalSunHours: (plant.totalSunHours || 0) + hours
+      });
+
+      setSunHours('');
+      if (selectedPlant?.id === plantId) {
+        setSelectedPlant({ 
+          ...selectedPlant, 
+          nextSun: Date.now() + (plant.sunHours * 60 * 60 * 1000), 
           lastSunned: Date.now(),
-          totalSunHours: (p.totalSunHours || 0) + hours
-        };
+          totalSunHours: (plant.totalSunHours || 0) + hours
+        });
       }
-      return p;
-    });
-    savePlants(updatedPlants, user.email);
-    setSunHours('');
-    if (selectedPlant?.id === plantId) {
-      setSelectedPlant(updatedPlants.find(p => p.id === plantId));
+    } catch (error) {
+      console.error('Erro ao atualizar sol:', error);
+      alert('Erro ao atualizar sol!');
     }
   };
 
-  const handleDeletePlant = (plantId) => {
+  // Deletar planta do Firestore
+  const handleDeletePlant = async (plantId) => {
     if (!window.confirm('Tem certeza que deseja remover esta planta?')) return;
-    const updatedPlants = plants.filter(p => p.id !== plantId);
-    savePlants(updatedPlants, user.email);
-    setSelectedPlant(null);
+    
+    try {
+      await deleteDoc(doc(db, 'plants', plantId));
+      setSelectedPlant(null);
+    } catch (error) {
+      console.error('Erro ao deletar planta:', error);
+      alert('Erro ao remover planta!');
+    }
   };
 
+  // Upload de foto com preview
   const handlePhotoUpload = (e) => {
     const file = e.target.files?.[0];
     if (file) {
+      setNewPlant({ ...newPlant, photoFile: file });
       const reader = new FileReader();
       reader.onloadend = () => {
-        identifyPlantFromImage(reader.result);
+        setNewPlant(prev => ({ ...prev, photoURL: reader.result }));
       };
       reader.readAsDataURL(file);
     }
+  };
+
+  // Buscar lojas de jardinagem próximas
+  const findNearbyStores = () => {
+    if (!navigator.geolocation) {
+      alert('Geolocalização não suportada pelo seu navegador!');
+      return;
+    }
+
+    setMapLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords;
+        setUserLocation({ lat: latitude, lng: longitude });
+        
+        // Buscar lojas usando OpenStreetMap
+        searchNearbyPlantStores(latitude, longitude);
+      },
+      (error) => {
+        console.error('Erro ao obter localização:', error);
+        alert('Não foi possível obter sua localização. Verifique as permissões.');
+        setMapLoading(false);
+      }
+    );
+  };
+
+  const searchNearbyPlantStores = async (lat, lng) => {
+    try {
+      // Usando Overpass API (OpenStreetMap) - GRATUITO!
+      // Busca por garden centres, florists e plant nurseries num raio de 5km
+      const radius = 5000; // 5km em metros
+      const overpassQuery = `
+        [out:json][timeout:25];
+        (
+          node["shop"="garden_centre"](around:${radius},${lat},${lng});
+          node["shop"="florist"](around:${radius},${lat},${lng});
+          node["shop"="garden"](around:${radius},${lat},${lng});
+          node["landuse"="plant_nursery"](around:${radius},${lat},${lng});
+          way["shop"="garden_centre"](around:${radius},${lat},${lng});
+          way["shop"="florist"](around:${radius},${lat},${lng});
+          way["shop"="garden"](around:${radius},${lat},${lng});
+        );
+        out center;
+      `;
+
+      const response = await fetch('https://overpass-api.de/api/interpreter', {
+        method: 'POST',
+        body: overpassQuery
+      });
+
+      const data = await response.json();
+      
+      if (data.elements && data.elements.length > 0) {
+        const stores = data.elements.map((element, index) => {
+          const storeLat = element.lat || element.center?.lat;
+          const storeLng = element.lon || element.center?.lon;
+          const distance = calculateDistance(lat, lng, storeLat, storeLng);
+          
+          return {
+            id: element.id || index,
+            name: element.tags?.name || element.tags?.['name:pt'] || `Loja de Jardinagem #${index + 1}`,
+            address: formatAddress(element.tags),
+            distance: `${distance.toFixed(1)} km`,
+            distanceValue: distance,
+            phone: element.tags?.phone || element.tags?.['contact:phone'] || 'Não disponível',
+            website: element.tags?.website || null,
+            lat: storeLat,
+            lng: storeLng,
+            type: element.tags?.shop || 'garden'
+          };
+        });
+
+        // Ordena por distância
+        stores.sort((a, b) => a.distanceValue - b.distanceValue);
+        
+        // Pega apenas as 10 mais próximas
+        setNearbyStores(stores.slice(0, 10));
+      } else {
+        setNearbyStores([]);
+        alert('Nenhuma loja de jardinagem encontrada nas proximidades (raio de 5km).');
+      }
+    } catch (error) {
+      console.error('Erro ao buscar lojas:', error);
+      alert('Erro ao buscar lojas próximas! Verifique sua conexão.');
+    } finally {
+      setMapLoading(false);
+    }
+  };
+
+  // Calcula distância entre dois pontos (fórmula de Haversine)
+  const calculateDistance = (lat1, lon1, lat2, lon2) => {
+    const R = 6371; // Raio da Terra em km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  };
+
+  // Formata endereço a partir das tags do OSM
+  const formatAddress = (tags) => {
+    if (!tags) return 'Endereço não disponível';
+    
+    const parts = [];
+    if (tags['addr:street']) parts.push(tags['addr:street']);
+    if (tags['addr:housenumber']) parts.push(tags['addr:housenumber']);
+    if (tags['addr:neighbourhood']) parts.push(tags['addr:neighbourhood']);
+    if (tags['addr:suburb']) parts.push(tags['addr:suburb']);
+    if (tags['addr:city']) parts.push(tags['addr:city']);
+    
+    return parts.length > 0 ? parts.join(', ') : 'Endereço não disponível';
+  };
+
+  // PlantAI - Perguntas sobre plantas usando Claude API
+  const handleAIQuestion = async () => {
+    if (!aiQuestion.trim()) {
+      alert('Digite uma pergunta sobre plantas!');
+      return;
+    }
+
+    setAiLoading(true);
+    setAiResponse('');
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1000,
+          messages: [
+            {
+              role: 'user',
+              content: `Você é um especialista em plantas e jardinagem. Responda de forma clara, amigável e prática em português brasileiro. Pergunta: ${aiQuestion}`
+            }
+          ]
+        })
+      });
+
+      const data = await response.json();
+      
+      if (data.content && data.content[0]) {
+        setAiResponse(data.content[0].text);
+      } else {
+        setAiResponse('Desculpe, não consegui processar sua pergunta. Tente novamente!');
+      }
+    } catch (error) {
+      console.error('Erro ao consultar PlantAI:', error);
+      setAiResponse('Erro ao conectar com a PlantAI. Verifique sua conexão e tente novamente.');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  // Identificar espécie da planta usando foto
+  const identifyPlantSpecies = async () => {
+    if (!newPlant.photoFile && !newPlant.photoURL) {
+      alert('Por favor, adicione uma foto da planta primeiro!');
+      return;
+    }
+
+    setIdentifyingPlant(true);
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 500,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'image',
+                  source: {
+                    type: 'base64',
+                    media_type: 'image/jpeg',
+                    data: newPlant.photoURL.split(',')[1]
+                  }
+                },
+                {
+                  type: 'text',
+                  text: 'Identifique a espécie desta planta. Responda APENAS com o nome científico e nome popular em português, de forma concisa. Exemplo: "Aloe vera (Babosa)" ou "Spathiphyllum wallisii (Lírio-da-paz)".'
+                }
+              ]
+            }
+          ]
+        })
+      });
+
+      const data = await response.json();
+      
+      if (data.content && data.content[0]) {
+        const identifiedSpecies = data.content[0].text.trim();
+        setNewPlant({ ...newPlant, species: identifiedSpecies });
+        alert(`✅ Planta identificada: ${identifiedSpecies}`);
+      } else {
+        alert('Não consegui identificar a planta. Tente com outra foto.');
+      }
+    } catch (error) {
+      console.error('Erro ao identificar planta:', error);
+      alert('Erro ao identificar a planta. Verifique sua conexão.');
+    } finally {
+      setIdentifyingPlant(false);
+    }
+  };
+
+  const openGoogleMaps = (lat, lng, name) => {
+    window.open(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}&query_place_id=${encodeURIComponent(name)}`, '_blank');
   };
 
   const formatTimeRemaining = (timestamp) => {
@@ -399,202 +510,56 @@ const PlukApp = () => {
     return `${hours}h`;
   };
 
-  const bgClass = darkMode ? 'bg-gray-900' : 'bg-gradient-to-br from-green-50 to-emerald-100';
-  const cardClass = darkMode ? 'bg-gray-800 text-white' : 'bg-white text-gray-800';
-  const textClass = darkMode ? 'text-gray-200' : 'text-gray-700';
-  const headerClass = darkMode ? 'bg-gray-800 text-white' : 'bg-white text-gray-800';
-
   if (showLogin) {
-    if (showForgotPassword) {
-      return (
-        <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
-          <div className={`${cardClass} rounded-3xl shadow-2xl p-8 w-full max-w-md`}>
-            <div className="text-center mb-8">
-              <h1 className="text-5xl font-bold text-green-600 mb-2">🌱 Pluk</h1>
-              <p className={textClass}>Recuperacao de Senha</p>
-            </div>
-            
-            <div className="space-y-4">
-              {recoveryStep === 1 && (
-                <>
-                  <div>
-                    <label className={`block text-sm font-medium ${textClass} mb-2`}>Email</label>
-                    <input
-                      type="email"
-                      value={recoveryEmail}
-                      onChange={(e) => setRecoveryEmail(e.target.value)}
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-transparent"
-                      placeholder="seu@email.com"
-                    />
-                  </div>
-                </>
-              )}
-              
-              {recoveryStep === 2 && (
-                <>
-                  <div className={`p-4 bg-blue-50 ${darkMode ? 'bg-blue-900' : ''} rounded-lg mb-4`}>
-                    <p className="text-sm font-medium">Pergunta de Seguranca:</p>
-                    <p className="text-sm mt-1">
-                      {JSON.parse(sessionStorage.getItem('plukUsers') || '[]').find(u => u.email === recoveryEmail)?.securityQuestion}
-                    </p>
-                  </div>
-                  <div>
-                    <label className={`block text-sm font-medium ${textClass} mb-2`}>Resposta</label>
-                    <input
-                      type="text"
-                      value={securityAnswer}
-                      onChange={(e) => setSecurityAnswer(e.target.value)}
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-transparent"
-                      placeholder="Sua resposta"
-                    />
-                  </div>
-                </>
-              )}
-              
-              {recoveryStep === 3 && (
-                <>
-                  <div>
-                    <label className={`block text-sm font-medium ${textClass} mb-2`}>Nova Senha</label>
-                    <div className="relative">
-                      <input
-                        type={showPassword ? "text" : "password"}
-                        value={newPassword}
-                        onChange={(e) => setNewPassword(e.target.value)}
-                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-transparent"
-                        placeholder="••••••••"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500"
-                      >
-                        {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
-                      </button>
-                    </div>
-                  </div>
-                </>
-              )}
-              
-              <button
-                onClick={handleForgotPassword}
-                className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold hover:bg-green-700 transition"
-              >
-                {recoveryStep === 3 ? 'Alterar Senha' : 'Continuar'}
-              </button>
-              
-              <button
-                onClick={() => {
-                  setShowForgotPassword(false);
-                  setRecoveryStep(1);
-                  setRecoveryEmail('');
-                  setSecurityAnswer('');
-                  setNewPassword('');
-                }}
-                className="w-full text-green-600 py-2 text-sm hover:underline"
-              >
-                Voltar ao Login
-              </button>
-            </div>
-          </div>
-        </div>
-      );
-    }
-    
     return (
-      <div className={`min-h-screen ${bgClass} flex items-center justify-center p-4`}>
-        <div className={`${cardClass} rounded-3xl shadow-2xl p-8 w-full max-w-md`}>
+      <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-100 flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl shadow-2xl p-8 w-full max-w-md">
           <div className="text-center mb-8">
             <h1 className="text-5xl font-bold text-green-600 mb-2">🌱 Pluk</h1>
-            <p className={textClass}>Cuide das suas plantas com carinho</p>
+            <p className="text-gray-600">Cuide das suas plantas com carinho</p>
           </div>
           
           <div className="space-y-4">
             <div>
-              <label className={`block text-sm font-medium ${textClass} mb-2`}>Email</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
               <input
                 type="email"
                 value={loginEmail}
                 onChange={(e) => setLoginEmail(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-transparent"
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
                 placeholder="seu@email.com"
+                disabled={loading}
               />
             </div>
             
             <div>
-              <label className={`block text-sm font-medium ${textClass} mb-2`}>Senha</label>
-              <div className="relative">
-                <input
-                  type={showPassword ? "text" : "password"}
-                  value={loginPassword}
-                  onChange={(e) => setLoginPassword(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-transparent"
-                  placeholder="••••••••"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500"
-                >
-                  {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
-                </button>
-              </div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Senha</label>
+              <input
+                type="password"
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                placeholder="••••••••"
+                disabled={loading}
+              />
             </div>
-            
-            {isRegistering && (
-              <>
-                <div>
-                  <label className={`block text-sm font-medium ${textClass} mb-2`}>Pergunta de Seguranca</label>
-                  <select
-                    value={securityQuestion}
-                    onChange={(e) => setSecurityQuestion(e.target.value)}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 bg-transparent"
-                  >
-                    <option value="">Selecione uma pergunta</option>
-                    <option value="Qual o nome do seu primeiro animal de estimacao?">Qual o nome do seu primeiro animal de estimacao?</option>
-                    <option value="Qual sua cor favorita?">Qual sua cor favorita?</option>
-                    <option value="Em que cidade voce nasceu?">Em que cidade voce nasceu?</option>
-                    <option value="Qual o nome da sua mae?">Qual o nome da sua mae?</option>
-                    <option value="Qual sua comida favorita?">Qual sua comida favorita?</option>
-                  </select>
-                </div>
-                
-                <div>
-                  <label className={`block text-sm font-medium ${textClass} mb-2`}>Resposta de Seguranca</label>
-                  <input
-                    type="text"
-                    value={securityAnswer}
-                    onChange={(e) => setSecurityAnswer(e.target.value)}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-transparent"
-                    placeholder="Sua resposta"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">Use para recuperar sua senha no futuro</p>
-                </div>
-              </>
-            )}
             
             <button
               onClick={handleLogin}
-              className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold hover:bg-green-700 transition"
+              disabled={loading}
+              className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold hover:bg-green-700 transition disabled:opacity-50"
             >
-              {isRegistering ? 'Criar Conta' : 'Entrar'}
+              {loading ? 'Carregando...' : (isRegistering ? 'Criar Conta' : 'Entrar')}
             </button>
-            
-            {!isRegistering && (
-              <button
-                onClick={() => setShowForgotPassword(true)}
-                className="w-full text-blue-600 py-2 text-sm hover:underline"
-              >
-                Esqueci minha senha
-              </button>
-            )}
             
             <button
               onClick={() => setIsRegistering(!isRegistering)}
               className="w-full text-green-600 py-2 text-sm hover:underline"
+              disabled={loading}
             >
-              {isRegistering ? 'Ja tem conta? Faca login' : 'Nao tem conta? Registre-se'}
+              {isRegistering ? 'Já tem conta? Faça login' : 'Não tem conta? Registre-se'}
             </button>
           </div>
         </div>
@@ -603,95 +568,41 @@ const PlukApp = () => {
   }
 
   return (
-    <div className={`min-h-screen ${bgClass}`}>
-      <header className={`${headerClass} shadow-md p-4 sticky top-0 z-10`}>
+    <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-100">
+      <header className="bg-white shadow-md p-4 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
           <h1 className="text-3xl font-bold text-green-600">🌱 Pluk</h1>
           <div className="flex items-center gap-4">
             <button
-              onClick={() => setDarkMode(!darkMode)}
-              className="p-2 rounded-lg hover:bg-gray-200 transition"
+              onClick={() => setShowPlantAI(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition"
             >
-              {darkMode ? <Sun size={20} /> : <Moon size={20} />}
+              <Search size={18} />
+              <span className="hidden sm:inline">PlantAI</span>
             </button>
-            <span className={`text-sm ${textClass} hidden md:flex items-center gap-2`}>
+            <button
+              onClick={findNearbyStores}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition"
+            >
+              <Store size={18} />
+              <span className="hidden sm:inline">Lojas</span>
+            </button>
+            <span className="text-sm text-gray-600 flex items-center gap-2">
               <User size={16} />
-              {user?.email}
+              <span className="hidden sm:inline">{user?.email}</span>
             </span>
             <button
               onClick={handleLogout}
               className="flex items-center gap-2 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition"
             >
               <LogOut size={18} />
-              Sair
+              <span className="hidden sm:inline">Sair</span>
             </button>
           </div>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto p-6">
-        <div className="mb-6 flex flex-col md:flex-row gap-4">
-          <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && searchPlantAI(searchQuery)}
-              placeholder="Pergunte sobre cuidados com plantas..."
-              className={`w-full pl-10 pr-4 py-3 ${cardClass} border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500`}
-            />
-          </div>
-          <button
-            onClick={() => searchPlantAI(searchQuery)}
-            disabled={isSearching}
-            className="px-6 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition disabled:opacity-50"
-          >
-            {isSearching ? 'Buscando...' : 'Buscar'}
-          </button>
-        </div>
-
-        {showSearchResults && (
-          <div className={`${cardClass} rounded-2xl shadow-lg p-6 mb-6`}>
-            <div className="flex justify-between items-start mb-4">
-              <h3 className="text-lg font-bold flex items-center gap-2">
-                🤖 Resposta PlantAI
-              </h3>
-              <button onClick={() => setShowSearchResults(false)}>
-                <X size={20} />
-              </button>
-            </div>
-            <p className={textClass}>{searchResults}</p>
-          </div>
-        )}
-
-        {weather && (
-          <div 
-            onClick={() => setShowWeatherDetail(true)}
-            className={`${cardClass} rounded-2xl shadow-lg p-6 mb-6 cursor-pointer hover:shadow-xl transition`}
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="text-5xl">{getWeatherDescription(weather.weather_code).icon}</div>
-                <div>
-                  <h3 className="text-2xl font-bold">{Math.round(weather.temperature_2m)}°C</h3>
-                  <p className={textClass}>{getWeatherDescription(weather.weather_code).text}</p>
-                </div>
-              </div>
-              <div className="text-right">
-                <p className={`${textClass} text-sm flex items-center gap-2 justify-end`}>
-                  <Droplets size={16} />
-                  {weather.relative_humidity_2m}%
-                </p>
-                <p className={`${textClass} text-sm flex items-center gap-2 justify-end mt-1`}>
-                  <Wind size={16} />
-                  {Math.round(weather.wind_speed_10m)} km/h
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
         <div className="mb-6">
           <button
             onClick={() => setShowAddPlant(true)}
@@ -702,128 +613,198 @@ const PlukApp = () => {
           </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 mb-12">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
           {plants.map(plant => (
-            <div
-              key={plant.id}
-              onClick={() => setSelectedPlant(plant)}
-              className={`${cardClass} rounded-2xl shadow-lg p-6 cursor-pointer hover:shadow-xl transition transform hover:scale-105`}
-            >
-              <div className="text-6xl text-center mb-4">{plant.icon}</div>
-              <h3 className="text-xl font-bold text-center mb-4">{plant.nickname}</h3>
-              
-              <div className="space-y-3">
-                <div className={`flex items-center justify-between ${darkMode ? 'bg-blue-900' : 'bg-blue-50'} rounded-lg p-3`}>
-                  <div className="flex items-center gap-2">
-                    <Droplets size={18} className="text-blue-600" />
-                    <span className="text-sm">Regar em:</span>
+                <div
+                  key={plant.id}
+                  onClick={() => setSelectedPlant(plant)}
+                  className="bg-white rounded-2xl shadow-lg p-6 cursor-pointer hover:shadow-xl transition transform hover:scale-105"
+                >
+                  <div className="text-6xl text-center mb-4">{plant.icon}</div>
+                  <h3 className="text-xl font-bold text-gray-800 text-center mb-4">{plant.nickname}</h3>
+                  
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between bg-blue-50 rounded-lg p-3">
+                      <div className="flex items-center gap-2">
+                        <Droplets size={18} className="text-blue-600" />
+                        <span className="text-sm text-gray-700">Regar em:</span>
+                      </div>
+                      <span className="font-semibold text-blue-600">
+                        {formatTimeRemaining(plant.nextWater)}
+                      </span>
+                    </div>
+                    
+                    <div className="flex items-center justify-between bg-yellow-50 rounded-lg p-3">
+                      <div className="flex items-center gap-2">
+                        <Sun size={18} className="text-yellow-600" />
+                        <span className="text-sm text-gray-700">Sol em:</span>
+                      </div>
+                      <span className="font-semibold text-yellow-600">
+                        {formatTimeRemaining(plant.nextSun)}
+                      </span>
+                    </div>
                   </div>
-                  <span className="font-semibold text-blue-600">
-                    {formatTimeRemaining(plant.nextWater)}
-                  </span>
                 </div>
-                
-                <div className={`flex items-center justify-between ${darkMode ? 'bg-yellow-900' : 'bg-yellow-50'} rounded-lg p-3`}>
-                  <div className="flex items-center gap-2">
-                    <Sun size={18} className="text-yellow-600" />
-                    <span className="text-sm">Sol em:</span>
-                  </div>
-                  <span className="font-semibold text-yellow-600">
-                    {formatTimeRemaining(plant.nextSun)}
-                  </span>
-                </div>
-              </div>
+              ))}
             </div>
-          ))}
-        </div>
 
-        {plants.length === 0 && (
-          <div className="text-center py-20 mb-12">
-            <div className="text-6xl mb-4">🌿</div>
-            <h2 className={`text-2xl font-bold ${textClass} mb-2`}>Nenhuma planta ainda</h2>
-            <p className={textClass}>Adicione sua primeira planta para comecar!</p>
-          </div>
-        )}
+            {plants.length === 0 && (
+              <div className="text-center py-20">
+                <div className="text-6xl mb-4">🌿</div>
+                <h2 className="text-2xl font-bold text-gray-700 mb-2">Nenhuma planta ainda</h2>
+                <p className="text-gray-500">Adicione sua primeira planta para começar!</p>
+              </div>
+            )}
 
-        <div className="mt-12">
-          <h2 className="text-2xl font-bold text-green-600 mb-6">📍 Onde comprar plantas e afins:</h2>
-          <div className={`${cardClass} rounded-2xl shadow-lg p-4 h-96`}>
-            <iframe
-              width="100%"
-              height="100%"
-              frameBorder="0"
-              scrolling="no"
-              src={`https://www.openstreetmap.org/export/embed.html?bbox=${userLocation.lon-0.05}%2C${userLocation.lat-0.05}%2C${userLocation.lon+0.05}%2C${userLocation.lat+0.05}&layer=mapnik&marker=${userLocation.lat}%2C${userLocation.lon}`}
-              className="rounded-xl"
-              title="Mapa de lojas"
-            />
-          </div>
-          <p className={`${textClass} text-sm mt-2 text-center`}>
-            🏪 Lojas de jardinagem proximas a voce
-          </p>
-        </div>
+            {/* Mapa de Lojas no Final da Página */}
+            <div className="mt-12 bg-white rounded-3xl shadow-xl p-8">
+              <div className="flex justify-between items-center mb-6">
+                <div>
+                  <h2 className="text-3xl font-bold text-gray-800 flex items-center gap-3 mb-2">
+                    <Store size={32} className="text-green-600" />
+                    Lojas de Jardinagem Próximas
+                  </h2>
+                  <p className="text-gray-600">Encontre lojas perto de você</p>
+                </div>
+                <button
+                  onClick={findNearbyStores}
+                  disabled={mapLoading}
+                  className="flex items-center gap-2 px-6 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition disabled:opacity-50"
+                >
+                  <MapPin size={20} />
+                  {mapLoading ? 'Buscando...' : 'Buscar Lojas'}
+                </button>
+              </div>
+
+              {mapLoading && (
+                <div className="text-center py-12">
+                  <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent mb-4"></div>
+                  <p className="text-gray-600">Buscando lojas próximas...</p>
+                </div>
+              )}
+
+              {!mapLoading && userLocation && (
+                <>
+                  {/* Mapa Interativo */}
+                  <div className="mb-6 rounded-xl overflow-hidden border-2 border-gray-200">
+                    <iframe
+                      width="100%"
+                      height="400"
+                      frameBorder="0"
+                      scrolling="no"
+                      marginHeight="0"
+                      marginWidth="0"
+                      src={`https://www.openstreetmap.org/export/embed.html?bbox=${userLocation.lng-0.02},${userLocation.lat-0.02},${userLocation.lng+0.02},${userLocation.lat+0.02}&layer=mapnik&marker=${userLocation.lat},${userLocation.lng}`}
+                      style={{ border: 0 }}
+                    ></iframe>
+                  </div>
+
+                  <div className="mb-6 p-4 bg-green-50 rounded-lg flex items-center gap-2">
+                    <MapPin size={20} className="text-green-600" />
+                    <span className="text-sm text-gray-700">
+                      📍 Você está aqui: {userLocation.lat.toFixed(4)}, {userLocation.lng.toFixed(4)}
+                    </span>
+                  </div>
+                </>
+              )}
+
+              {!mapLoading && nearbyStores.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {nearbyStores.map(store => (
+                    <div key={store.id} className="border border-gray-200 rounded-xl p-5 hover:shadow-lg transition bg-gradient-to-br from-white to-green-50">
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex-1">
+                          <h3 className="text-lg font-bold text-gray-800 mb-1 flex items-center gap-2">
+                            🏪 {store.name}
+                          </h3>
+                          <p className="text-gray-600 text-sm mb-2">{store.address}</p>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-3 text-sm mb-3 flex-wrap">
+                        <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full font-semibold flex items-center gap-1">
+                          <Navigation size={14} />
+                          {store.distance}
+                        </span>
+                        {store.phone && store.phone !== 'Não disponível' && (
+                          <span className="text-gray-600 text-xs bg-gray-100 px-2 py-1 rounded">
+                            📞 {store.phone}
+                          </span>
+                        )}
+                      </div>
+                      
+                      {store.website && (
+                        <a 
+                          href={store.website} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-blue-600 text-sm hover:underline mb-3 inline-block"
+                        >
+                          🌐 Visitar site
+                        </a>
+                      )}
+                      
+                      <button
+                        onClick={() => openGoogleMaps(store.lat, store.lng, store.name)}
+                        className="w-full flex items-center justify-center gap-2 bg-blue-500 text-white py-2 rounded-lg font-semibold hover:bg-blue-600 transition mt-2"
+                      >
+                        <Navigation size={16} />
+                        Como Chegar
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : !mapLoading && userLocation && nearbyStores.length === 0 ? (
+                <div className="text-center py-10 bg-gray-50 rounded-xl">
+                  <Store size={48} className="text-gray-400 mx-auto mb-4" />
+                  <p className="text-gray-600 font-medium">
+                    Nenhuma loja encontrada em um raio de 5km
+                  </p>
+                  <p className="text-gray-500 text-sm mt-2">
+                    Tente em outra localização ou amplie o raio de busca
+                  </p>
+                </div>
+              ) : !mapLoading && !userLocation ? (
+                <div className="text-center py-16 bg-gradient-to-br from-blue-50 to-green-50 rounded-xl">
+                  <MapPin size={64} className="text-blue-500 mx-auto mb-4" />
+                  <h3 className="text-xl font-bold text-gray-800 mb-2">
+                    Encontre lojas perto de você!
+                  </h3>
+                  <p className="text-gray-600 mb-4">
+                    Clique em "Buscar Lojas" para ver jardinarias próximas
+                  </p>
+                  <button
+                    onClick={findNearbyStores}
+                    className="inline-flex items-center gap-2 px-8 py-3 bg-blue-500 text-white rounded-full font-semibold hover:bg-blue-600 transition shadow-lg"
+                  >
+                    <Search size={20} />
+                    Buscar Agora
+                  </button>
+                </div>
+              ) : null}
+            </div>
+        )&rbrace;
       </main>
 
-      {showWeatherDetail && weather && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className={`${cardClass} rounded-3xl shadow-2xl p-8 w-full max-w-md`}>
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold">Detalhes do Clima</h2>
-              <button onClick={() => setShowWeatherDetail(false)}>
-                <X size={24} />
-              </button>
-            </div>
-            
-            <div className="text-center mb-6">
-              <div className="text-7xl mb-4">{getWeatherDescription(weather.weather_code).icon}</div>
-              <h3 className="text-4xl font-bold mb-2">{Math.round(weather.temperature_2m)}°C</h3>
-              <p className={textClass}>{getWeatherDescription(weather.weather_code).text}</p>
-            </div>
-            
-            <div className="space-y-4">
-              <div className={`flex items-center justify-between p-4 ${darkMode ? 'bg-blue-900' : 'bg-blue-50'} rounded-lg`}>
-                <div className="flex items-center gap-3">
-                  <Droplets size={24} className="text-blue-600" />
-                  <span className="font-medium">Umidade</span>
-                </div>
-                <span className="text-xl font-bold">{weather.relative_humidity_2m}%</span>
-              </div>
-              
-              <div className={`flex items-center justify-between p-4 ${darkMode ? 'bg-gray-700' : 'bg-gray-50'} rounded-lg`}>
-                <div className="flex items-center gap-3">
-                  <Wind size={24} className="text-gray-600" />
-                  <span className="font-medium">Vento</span>
-                </div>
-                <span className="text-xl font-bold">{Math.round(weather.wind_speed_10m)} km/h</span>
-              </div>
-              
-              <div className={`p-4 ${darkMode ? 'bg-green-900' : 'bg-green-50'} rounded-lg`}>
-                <p className="text-sm text-center">
-                  💡 <strong>Dica:</strong> {weather.temperature_2m > 28 ? 'Dia quente! Regue suas plantas.' : weather.relative_humidity_2m > 70 ? 'Alta umidade, reduza a rega.' : 'Condicoes ideais para suas plantas!'}
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
+      {/* Modal Adicionar Planta */}
       {showAddPlant && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className={`${cardClass} rounded-3xl shadow-2xl p-8 w-full max-w-md max-h-[90vh] overflow-y-auto`}>
+          <div className="bg-white rounded-3xl shadow-2xl p-8 w-full max-w-md max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold">Nova Planta</h2>
-              <button onClick={() => setShowAddPlant(false)}>
+              <h2 className="text-2xl font-bold text-gray-800">Nova Planta</h2>
+              <button onClick={() => setShowAddPlant(false)} className="text-gray-500 hover:text-gray-700">
                 <X size={24} />
               </button>
             </div>
             
             <div className="space-y-4">
               <div>
-                <label className={`block text-sm font-medium ${textClass} mb-2`}>Tipo de Planta</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de Planta</label>
                 <select
                   value={newPlant.type}
                   onChange={(e) => setNewPlant({ ...newPlant, type: e.target.value })}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 bg-transparent"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
+                  disabled={loading}
                 >
                   {Object.entries(PLANT_TYPES).map(([key, val]) => (
                     <option key={key} value={key}>{val.icon} {val.name}</option>
@@ -832,66 +813,82 @@ const PlukApp = () => {
               </div>
               
               <div>
-                <label className={`block text-sm font-medium ${textClass} mb-2`}>
-                  Foto da Planta {isIdentifyingPlant && '(Identificando...)'}
-                </label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handlePhotoUpload}
-                  disabled={isIdentifyingPlant}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 bg-transparent"
-                />
-                {newPlant.photo && (
-                  <img src={newPlant.photo} alt="Preview" className="mt-2 w-full h-40 object-cover rounded-lg" />
-                )}
+                <label className="block text-sm font-medium text-gray-700 mb-2">Espécie</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newPlant.species}
+                    onChange={(e) => setNewPlant({ ...newPlant, species: e.target.value })}
+                    className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
+                    placeholder="Ex: Aloe Vera"
+                    disabled={loading || identifyingPlant}
+                  />
+                  <button
+                    onClick={identifyPlantSpecies}
+                    disabled={loading || identifyingPlant || !newPlant.photoURL}
+                    className="flex items-center gap-2 bg-purple-500 text-white px-4 py-3 rounded-lg font-semibold hover:bg-purple-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    title={!newPlant.photoURL ? 'Adicione uma foto primeiro' : 'Identificar com PlantAI'}
+                  >
+                    <Search size={18} />
+                    {identifyingPlant ? '...' : 'AI'}
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  💡 Adicione uma foto e clique em "AI" para identificar automaticamente
+                </p>
               </div>
               
               <div>
-                <label className={`block text-sm font-medium ${textClass} mb-2`}>Especie</label>
-                <input
-                  type="text"
-                  value={newPlant.species}
-                  onChange={(e) => setNewPlant({ ...newPlant, species: e.target.value })}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 bg-transparent"
-                  placeholder="Ex: Aloe Vera"
-                />
-              </div>
-              
-              <div>
-                <label className={`block text-sm font-medium ${textClass} mb-2`}>Apelido *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Apelido *</label>
                 <input
                   type="text"
                   value={newPlant.nickname}
                   onChange={(e) => setNewPlant({ ...newPlant, nickname: e.target.value })}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 bg-transparent"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
                   placeholder="Ex: Minha Plantinha"
+                  disabled={loading}
                 />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Foto da Planta</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handlePhotoUpload}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
+                  disabled={loading}
+                />
+                {newPlant.photoURL && (
+                  <img src={newPlant.photoURL} alt="Preview" className="mt-2 w-full h-40 object-cover rounded-lg" />
+                )}
               </div>
               
               <button
                 onClick={handleAddPlant}
-                className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold hover:bg-green-700 transition"
+                disabled={loading}
+                className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold hover:bg-green-700 transition disabled:opacity-50"
               >
-                Adicionar Planta
+                {loading ? 'Adicionando...' : 'Adicionar Planta'}
               </button>
             </div>
           </div>
         </div>
       )}
 
+      {/* Modal Detalhes da Planta */}
       {selectedPlant && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className={`${cardClass} rounded-3xl shadow-2xl p-8 w-full max-w-2xl max-h-[90vh] overflow-y-auto`}>
+          <div className="bg-white rounded-3xl shadow-2xl p-8 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold">{selectedPlant.nickname}</h2>
-              <button onClick={() => setSelectedPlant(null)}>
+              <h2 className="text-2xl font-bold text-gray-800">{selectedPlant.nickname}</h2>
+              <button onClick={() => setSelectedPlant(null)} className="text-gray-500 hover:text-gray-700">
                 <X size={24} />
               </button>
             </div>
             
-            {selectedPlant.photo ? (
-              <img src={selectedPlant.photo} alt={selectedPlant.nickname} className="w-full h-64 object-cover rounded-xl mb-6" />
+            {selectedPlant.photoURL ? (
+              <img src={selectedPlant.photoURL} alt={selectedPlant.nickname} className="w-full h-64 object-cover rounded-xl mb-6" />
             ) : (
               <div className="w-full h-64 bg-gray-100 rounded-xl flex items-center justify-center mb-6">
                 <div className="text-center">
@@ -908,7 +905,7 @@ const PlukApp = () => {
               </div>
               {selectedPlant.species && (
                 <div className="flex justify-between">
-                  <span className="text-gray-600">Especie:</span>
+                  <span className="text-gray-600">Espécie:</span>
                   <span className="font-semibold">{selectedPlant.species}</span>
                 </div>
               )}
@@ -924,7 +921,7 @@ const PlukApp = () => {
                 className="w-full flex items-center justify-center gap-3 bg-blue-600 text-white py-4 rounded-xl font-semibold hover:bg-blue-700 transition"
               >
                 <Droplets size={20} />
-                Ja Reguei Esta Planta
+                Já Reguei Esta Planta
               </button>
               
               <div className="flex gap-2">
@@ -935,7 +932,7 @@ const PlukApp = () => {
                   placeholder="Horas"
                   step="0.5"
                   min="0"
-                  className="flex-1 px-4 py-4 border border-gray-300 rounded-xl focus:ring-2 focus:ring-yellow-500 bg-transparent"
+                  className="flex-1 px-4 py-4 border border-gray-300 rounded-xl focus:ring-2 focus:ring-yellow-500"
                 />
                 <button
                   onClick={() => handleSunPlant(selectedPlant.id)}
@@ -957,8 +954,75 @@ const PlukApp = () => {
           </div>
         </div>
       )}
+
+      {/* Modal PlantAI */}
+      {showPlantAI && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-3xl shadow-2xl p-8 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                <Search size={28} className="text-purple-600" />
+                PlantAI - Sua Assistente de Jardinagem
+              </h2>
+              <button onClick={() => setShowPlantAI(false)} className="text-gray-500 hover:text-gray-700">
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="mb-6 p-4 bg-purple-50 rounded-lg">
+              <p className="text-sm text-gray-700">
+                💡 Pergunte qualquer coisa sobre plantas! Como cuidar, identificar pragas, quando regar, melhores adubos, etc.
+              </p>
+            </div>
+
+            <div className="mb-6">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={aiQuestion}
+                  onChange={(e) => setAiQuestion(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && !aiLoading && handleAIQuestion()}
+                  placeholder="Ex: Como cuidar de suculentas no verão?"
+                  className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+                  disabled={aiLoading}
+                />
+                <button
+                  onClick={handleAIQuestion}
+                  disabled={aiLoading}
+                  className="flex items-center gap-2 bg-purple-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-purple-600 transition disabled:opacity-50"
+                >
+                  {aiLoading ? '...' : <Send size={20} />}
+                </button>
+              </div>
+            </div>
+
+            {aiLoading && (
+              <div className="text-center py-8">
+                <div className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-purple-500 border-t-transparent"></div>
+                <p className="text-gray-600 mt-4">PlantAI está pensando...</p>
+              </div>
+            )}
+
+            {aiResponse && !aiLoading && (
+              <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-6 border border-purple-200">
+                <h3 className="font-bold text-purple-800 mb-3 flex items-center gap-2">
+                  🤖 Resposta da PlantAI:
+                </h3>
+                <p className="text-gray-800 whitespace-pre-wrap leading-relaxed">{aiResponse}</p>
+              </div>
+            )}
+
+            {!aiResponse && !aiLoading && (
+              <div className="text-center py-10 text-gray-400">
+                <Search size={48} className="mx-auto mb-4 opacity-50" />
+                <p>Faça uma pergunta para começar!</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
-export default PlukApp
+export default PlukApp;
